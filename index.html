@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>资源共享网盘</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        #file-list {
+            list-style-type: none;
+            padding: 0;
+        }
+        #file-list li {
+            margin: 10px 0;
+        }
+        button {
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        #upload-section {
+            display: none;
+            margin-top: 20px;
+        }
+        #login-section, #upload-section {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>欢迎使用资源共享网盘</h1>
+
+    <!-- 登录部分 -->
+    <div id="login-section">
+        <h2>登录</h2>
+        <input type="text" id="username" placeholder="用户名" />
+        <input type="password" id="password" placeholder="密码" />
+        <button onclick="login()">登录</button>
+    </div>
+
+    <!-- 上传文件部分 (管理员可见) -->
+    <div id="upload-section">
+        <h2>上传文件</h2>
+        <input type="file" id="file-input" />
+        <button onclick="uploadFile()">上传</button>
+    </div>
+
+    <!-- 文件列表部分 -->
+    <h2>文件列表</h2>
+    <ul id="file-list"></ul>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        let token = localStorage.getItem('authToken'); // 保存 JWT Token
+
+        // 登录处理
+        function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            axios.post('http://localhost:5005/login', { username, password })
+                .then(response => {
+                    const { token: authToken } = response.data;
+                    localStorage.setItem('authToken', authToken); // 存储 token
+                    token = authToken;
+                    checkUserRole();  // 登录成功后检查用户角色
+                    loadFileList();   // 加载文件列表
+                })
+                .catch(error => {
+                    let errorMessage = '登录失败！请检查用户名和密码。';
+
+                    // 如果错误有响应数据，打印具体的响应
+                    if (error.response) {
+                        errorMessage = `错误: 状态码 ${error.response.status} - ${error.response.data.message || '未知错误'}`;
+                    } else if (error.request) {
+                        // 请求已发送，但没有收到响应
+                        errorMessage = '请求未收到响应，请检查服务器是否正常运行。';
+                    } else {
+                        // 其他错误信息
+                        errorMessage = `请求配置错误: ${error.message}`;
+                    }
+
+                    alert(errorMessage);  // 弹出错误信息
+                });
+        }
+
+        // 检查用户角色并展示相应内容
+        function checkUserRole() {
+            if (!token) return;
+            // 使用JWT获取角色
+            const decoded = JSON.parse(atob(token.split('.')[1]));  // 解码JWT获取角色
+            if (decoded.role === 'admin') {
+                document.getElementById('upload-section').style.display = 'block';
+            } else {
+                document.getElementById('upload-section').style.display = 'none';
+            }
+        }
+
+        // 加载文件列表
+        function loadFileList() {
+            if (token) {
+                axios.get('http://localhost:5005/files', { headers: { 'Authorization': `Bearer ${token}` } })
+                .then(response => {
+                    const files = response.data;
+                    const fileList = document.getElementById('file-list');
+                    fileList.innerHTML = ''; // 清空文件列表
+                    files.forEach(file => {
+                        const listItem = document.createElement('li');
+                        // 使用模板字符串插入动态数据
+                        listItem.textContent = `${file.filename} (大小: ${file.fileSize}字节)`;
+                        const downloadButton = document.createElement('button');
+                        downloadButton.textContent = '下载';
+                        downloadButton.onclick = () => downloadFile(file.fileId);
+                        listItem.appendChild(downloadButton);
+                        fileList.appendChild(listItem);
+                    });
+                })
+                .catch(error => {
+                    // 检查是否有响应（error.response）
+                    if (error.response) {
+                        // 如果有响应，显示服务器返回的错误信息
+                        console.error(`加载文件列表失败！错误: ${error.response.data}`);
+                    } else if (error.request) {
+                        // 如果没有响应，可能是网络问题
+                        console.error('请求未收到响应！请检查网络连接。');
+                    } else {
+                        // 其他未知错误
+                        console.error(`发生了一个错误: ${error.message}`);
+                    }
+                });
+            } else {
+                console.log('Token 无效或不存在');
+            }
+        }
+
+        // 上传文件（管理员才有权限）
+        function uploadFile() {
+            const fileInput = document.getElementById('file-input');
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            axios.post('http://localhost:5005/upload', formData, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'multipart/form-data'
+                }
+            })
+            .then(response => {
+                alert('文件上传成功！');
+                loadFileList();  // 上传成功后重新加载文件列表
+            })
+            .catch(error => {
+                alert('文件上传失败！');
+            });
+        }
+
+        // 下载文件
+        function downloadFile(fileId) {
+            axios.get(`http://localhost:5005/download/${fileId}`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+                responseType: 'blob'  // 以二进制格式响应
+            })
+            .then(response => {
+                const blob = response.data;
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `file_${fileId}`;  // 使用反引号和字符串模板
+                // 设定下载文件名
+                link.click();
+            })
+            .catch(error => {
+                alert('文件下载失败！');
+            });
+        }
+
+        // 页面加载时执行
+        if (token) {
+            checkUserRole();  // 检查角色
+            loadFileList();   // 加载文件列表
+        }
+    </script>
+
+</body>
+</html>
